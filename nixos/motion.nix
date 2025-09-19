@@ -1,45 +1,51 @@
-{ config, pkgs, ... }:
+{ config, pkgs, lib, ... }:
 
-{
-  ############################
-  # Motion: capture frames
-  ############################
-  services.motion = {
-    enable = true;
-    package = pkgs.motion;
-    settings = {
-      daemon = on;
+let
+  motionConfig = pkgs.writeText "motion.conf" ''
+	  daemon off
+	  width 1280
+	  height 720
+	  framerate 1
+	  target_dir /var/www/motion-images
+	  picture_output on
+	  movie_output off
+	  threshold 20000
+	  stream_localhost off
+	  v4l2_palette 2
+  '';
+in {
 
-      # Resolution & FPS
-      width = 1280;
-      height = 720;
-      framerate = 1;              # 1 fps is enough for dataset
+  environment.systemPackages = with pkgs; [
+    motion
+    v4l-utils
+    lighttpd
+  ];
 
-      # Output
-      target_dir = "/var/lib/motion";
-      output_pictures = "on";     # save all frames during motion
-      ffmpeg_output_movies = off; # only stills
-
-      # Motion detection
-      threshold = 1500;           # tweak sensitivity as needed
-      stream_localhost = off;
+  ##################################
+  # Systemd service for motion
+  ##################################
+  systemd.services.motion = {
+    description = "Motion daemon";
+    after = [ "network.target" "local-fs.target" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      ExecStart = "${pkgs.motion}/bin/motion -c ${motionConfig}";
+      Restart = "always";
+      User = "root"; # or create a dedicated user
     };
   };
 
-  ############################
-  # Lighttpd: serve files
-  ############################
+  ##################################
+  # Lighttpd webserver for browsing
+  ##################################
   services.lighttpd = {
     enable = true;
-    document-root = "/var/lib/motion";
-    port = 8080; # access via http://<tailscale-ip>:8080/
+    document-root = "/var/www/motion-images";
+    port = 8080;
+  extraConfig = ''
+    server.modules += ( "mod_dirlisting" )
+    dir-listing.activate = "enable"
+  '';
   };
 
-  ############################
-  # Useful tools for debugging
-  ############################
-  environment.systemPackages = with pkgs; [
-    v4l-utils   # inspect webcam formats: v4l2-ctl --list-formats-ext
-    lighttpd    # for testing configs manually if needed
-  ];
 }
